@@ -32,7 +32,7 @@ alpha = cp.float32(0.053733049288045114)
 A=cp.float32(1)
 B=cp.float32(.466)
 ib=cp.float32(1.8)
-s_th = cp.float32(0.694) #signal threshold for somas
+s_th = cp.float32(0.7) #signal threshold for somas
 
 #time and size parameters
 t=2000
@@ -98,14 +98,16 @@ mini = [[0, 0.6, 0, 0,   0,   0,   0],
 mini = cp.asarray(mini, dtype=cp.float16)
 
 def generate_adj_matrix(mini):
-    adj_matrix = cp.zeros((k,k), dtype=cp.float16)
+    adj_matrix = cp.zeros((k,k))
     for i in range(0,k,neuron_size):
         adj_matrix[i:i+neuron_size, i:i+neuron_size]=mini
     return adj_matrix
 
-adj_matrix = generate_adj_matrix(mini)
 
-som = cp.zeros(int(k/neuron_size), dtype=int)
+adj_matrix = generate_adj_matrix(mini)
+adj_matrix.astype(cp.float16)
+
+som = cp.zeros(int(k/neuron_size), dtype=cp.int32)
 som[0] = neuron_size-1
 for i in range(1,int(k/neuron_size)):
     som[i]=(som[i-1]+neuron_size)
@@ -114,7 +116,7 @@ for i in range(1,int(k/neuron_size)):
 #neuron_matrix[k-1][1]=0.5 #don't let them go into soma directly???
 #print(neuron_matrix)
 
-def neuron_step(t,n, data):
+def neuron_step(t,n, data, flux_offset=0):
     '''
     Iterates through time and updates flux and signal using the equation (signal_vector@weight_matrix) + leaf_nodes*data[i%10000]
     and signal is updated using the update equation (4) from phenom paper
@@ -133,10 +135,11 @@ def neuron_step(t,n, data):
     weight_matrix = adj_matrix
 
     #leaf_nodes = ((cp.random.rand(n, dtype=cp.float32))-0.95) *(0.5/0.72)
-    leaf_nodes = cp.zeros(k, dtype=cp.float16)
+    leaf_nodes = cp.zeros(k)
     leaf_nodes[0:k:neuron_size]= 0.7
     leaf_nodes[2:k:neuron_size]= 0.7
     leaf_nodes[somas] = 0
+    leaf_nodes.astype(cp.float16)
 
     signal_vector = leaf_nodes*data[0]
     r_fq = cp.zeros(n, dtype=cp.float16)
@@ -147,7 +150,7 @@ def neuron_step(t,n, data):
     for i in range(t):
         #print(f"Timestep = {i}", end="\r") 
 
-        flux_vector=(cp.matmul(signal_vector,weight_matrix))+(leaf_nodes * data[i%10000])
+        flux_vector=(cp.matmul(signal_vector,weight_matrix))+(leaf_nodes * data[i%10000])+flux_offset
         #start_gpu.record()
 
         if(cp.max(spike_check_arr)==1):
