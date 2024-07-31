@@ -10,7 +10,16 @@ import cupyx.scipy.sparse
 import cupy as cp
 #from cupy import random
 from cupy import cuda as cua
-from math_sim import generate_graph
+import nvidia_smi
+
+
+nvidia_smi.nvmlInit()
+handle0 = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
+handle1 = nvidia_smi.nvmlDeviceGetHandleByIndex(1)
+
+# card id 0 hardcoded here, there is also a call to get all available card ids, so we could iterate
+
+
 
 #phi_spd
 data = loadtxt('phi_signal.csv', delimiter=',')
@@ -35,8 +44,8 @@ ib=cp.float32(1.8)
 s_th = cp.float32(0.7) #signal threshold for somas
 
 #time and size parameters
-t=2000
-k=7000 #same as n
+t=3000
+k=28000 #same as n
 neuron_size = 7
 
 @cuda.jit
@@ -107,14 +116,14 @@ def generate_adj_matrix(mini):
 adj_matrix = generate_adj_matrix(mini)
 adj_matrix.astype(cp.float16)
 
-som = cp.zeros(int(k/neuron_size), dtype=cp.int32)
+som = cp.zeros(int(k/neuron_size))
 som[0] = neuron_size-1
 for i in range(1,int(k/neuron_size)):
     som[i]=(som[i-1]+neuron_size)
+som=som.astype(cp.int64)
 
-#neuron_matrix = cp.asarray(generate_graph(k))
-#neuron_matrix[k-1][1]=0.5 #don't let them go into soma directly???
-#print(neuron_matrix)
+mempool = cp.get_default_memory_pool()
+pinned_mempool = cp.get_default_pinned_memory_pool()
 
 def neuron_step(t,n, data, flux_offset=0):
     '''
@@ -127,7 +136,6 @@ def neuron_step(t,n, data, flux_offset=0):
 
     #start_gpu = cp.cuda.Event()
     #end_gpu= cp.cuda.Event() 
-    
     plot_signals = cp.zeros((t,n), dtype=cp.float16)
     plot_fluxes = cp.zeros((t,n), dtype=cp.float16)
 
@@ -146,7 +154,11 @@ def neuron_step(t,n, data, flux_offset=0):
 
     #print(weight_matrix)
     #print(leaf_nodes)
-    
+    gpu_array=cp.zeros(t)
+    mem_array=cp.zeros(t)
+    print('used bytes',mempool.used_bytes())
+    print('total bytes',mempool.total_bytes())
+    print('cpu mem?',pinned_mempool.n_free_blocks())
     for i in range(t):
         #print(f"Timestep = {i}", end="\r") 
 
@@ -186,8 +198,15 @@ def neuron_step(t,n, data, flux_offset=0):
             spike_check[512,1024](signal_vector, somas, spike_check_arr)
        
         plot_signals[i] = signal_vector
-        plot_fluxes[i] = flux_vector 
-    return plot_signals, plot_fluxes, weight_matrix
+        plot_fluxes[i] = flux_vector
+
+        #res0 = nvidia_smi.nvmlDeviceGetUtilizationRates(handle0)
+        #gpu_array[i] = res0.gpu
+        #mem_array[i] = res0.memory
+        print('used bytes',mempool.used_bytes())
+        print('total bytes',mempool.total_bytes())
+        print('cpu mem?',pinned_mempool.n_free_blocks())
+    return plot_signals, plot_fluxes, weight_matrix, gpu_array, mem_array
 
 
 
@@ -223,26 +242,37 @@ elif(mode=='length'):
 
 start_gpu1 = cp.cuda.Event()
 end_gpu1= cp.cuda.Event() 
-
+num_iter=1
 start_gpu1.record()
 
-plot_signals,plot_fluxes, weight_matrix = neuron_step(t, k , data)
+for iterations in range(num_iter):
+
+    plot_signals,plot_fluxes, weight_matrix, gpu_array, mem_array = neuron_step(t, k , data)
 
 end_gpu1.record()
 end_gpu1.synchronize()
-t_gpu = cua.get_elapsed_time(start_gpu1, end_gpu1)
+t_gpu = cp.cuda.get_elapsed_time(start_gpu1, end_gpu1)
+print('time',t_gpu/(1000*num_iter))
 
 
-print('time',t_gpu/1000)
 print('count',cp.count_nonzero(weight_matrix)/(k**2))
 #print(weight_matrix[:,1500])
 print('sum',cp.sum(weight_matrix[:,1]))
 
 time_axis = np.arange(t)
-#plt.plot(time_axis, cp.asnumpy(plot_signals)[:,0], label='fluxes')
-#plt.savefig('test_plot4.png', dpi=400, bbox_inches='tight')
-#print(cp.asnumpy(plot_fluxes[:,k-1]))
+'''
+fig, axs = plt.subplots(1)
+axs.plot(time_axis, cp.asnumpy(plot_signals)[:,k-1])
+#plt.plot(time_axis, cp.asnumpy(plot_fluxes)[:,k-1])
+axs.plot(time_axis,cp.asnumpy(gpu_array)/50)
+axs.plot(time_axis,cp.asnumpy(mem_array)/50)
+axs.set_ylim(0,1.5)
 
+plt.savefig('mem3.png', dpi=400, bbox_inches='tight')
+'''
+
+
+'''
 fig, axs = plt.subplots(14)
 axs[0].plot(time_axis, cp.asnumpy(plot_signals)[:,0])
 axs[1].plot(time_axis, cp.asnumpy(plot_signals)[:,1])
@@ -284,4 +314,4 @@ for i in range(14):
     axs[i].set_xlim(0,2000)
 
 plt.savefig('flux_sig_spike_plot2.png', dpi=400, bbox_inches='tight')
-#'''
+'''
